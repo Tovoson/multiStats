@@ -29,7 +29,7 @@ class KPIDailyView(APIView):
         
         if not resultat['success']:
             return Response({'error': 'Text extraction failed', 'details':resultat['error']}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-            
+       
         return Response({'success': True,'text': resultat['text']}, status=status.HTTP_200_OK)
 
 def index(request):
