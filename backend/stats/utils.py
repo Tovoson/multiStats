@@ -1,10 +1,12 @@
 # stats/utils.py
 
+from csv import reader
 from .models import KpiDaily, StatsPeriod
 from datetime import date
-import pytesseract as pt
+import easyocr
 from PIL import Image, ImageEnhance, ImageFilter, ImageOps
 import os
+import re
 
 def calculer_delta_journalier(date_jour):
     """
@@ -63,71 +65,302 @@ def calculer_delta_journalier(date_jour):
             'error': f"Données manquantes pour le {date_jour}"
         }
 
-def preprocess_image_for_ocr(image):
+def extract_kpi_with_easyocr(image_file):
     """
-    Améliore l'image pour un meilleur OCR
-    Optimisé pour capturer du texte clair sur fond sombre
-    """
-    # Convertir en niveaux de gris
-    image = image.convert('L')
-    
-    # Inverser les couleurs (texte clair sur fond sombre)
-    image = ImageOps.invert(image)
-    
-    # Augmenter le contraste (x3 pour texte difficile)
-    enchancer = ImageEnhance.Contrast(image)
-    image = enchancer.enhance(3)
-
-    #Augmenter la luminosité
-    enhancer = ImageEnhance.Brightness(image)
-    image = enhancer.enhance(1.5)
-
-    # Appliquer un seuil (binarisation)
-    # Convertir tous les pixels en noir ou blanc pur
-    threshold = 150
-    image = image.point(lambda p:255 if p > threshold else 0)
-
-    #Appliquer la netteté
-    image = image.filter(ImageFilter.SHARPEN)
-
-    # Agrandir l'image (x2) pour meilleure reconnaissance
-    width, height = image.size
-    image = image.resize((width * 2, height * 2), Image.LANCZOS)
-
-    return  image
-
-def extract_text_from_image(image_file):
-    """
-    Extrait le texte d'une image uploadée avec pytesseract
-    
-    Args:
-        image_file: Objet InMemoryUploadedFile ou TemporaryUploadedFile de Django
-    
-    Returns:
-        dict: {'success': bool, 'text': str} ou {'success': bool, 'error': str}
+    Extrait les KPIs avec EasyOCR en utilisant les positions géographiques
     """
     try:
-        image = Image.open(image_file)
-
-        #Prétraiter l'image
-        processed_image = preprocess_image_for_ocr(image)
-
-        debug_path = 'img_debug.png'
-        processed_image.save(debug_path)
-        print(f'Image prétraitée sauvegardé dans {debug_path}')
-
-        # Extraire le texte avec configuration optimisée
-        # --psm 6 = assume a single uniform block of text
-        # --oem 3 = use LSTM OCR Engine
-        custom_config = r'--oem 3 --psm 6'
-        text = pt.image_to_string(processed_image, lang='eng', config=custom_config)
-        return {
+        images = image_file.read()
+        reader = easyocr.Reader(['en'], gpu=False)
+        results = reader.readtext(images, detail=1)
+        
+        # Analyser par zones géographiques
+        kpi_data = parse_by_geographic_zones(results)
+        print(f'donnée extraire: {kpi_data}')
+        
+        """ return {
             'success': True,
-            'text': text.strip()
-        }
+            'data': kpi_data,
+            'detections_count': len(results)
+        } """
         
     except Exception as e:
+        print(f'erreur : {str(e)}')
         return {
             'success': False,
             'error': str(e)
         }
+
+
+def parse_by_geographic_zones(results):
+    """
+    Parse les KPIs en divisant l'écran en 4 zones :
+    - Zone 1 (haut-gauche) : Messages
+    - Zone 2 (haut-droite) : Gifts
+    - Zone 3 (bas-gauche) : Photos
+    - Zone 4 (bas-droite) : Response Speed
+    """
+    
+    # Séparer les détections par position
+    zones = {
+        'messages': [],      # x < 480, y < 500
+        'gifts': [],         # x >= 480, y < 500
+        'photos': [],        # x < 480, y >= 500
+        'speeds': [],         # x >= 480, y >= 500
+        'meta': []           # Total KPI, KPI Effect (très bas)
+    }
+    
+    for (bbox, text, confidence) in results:
+        # Position du centre du texte
+        x_center = (bbox[0][0] + bbox[2][0]) / 2
+        y_center = (bbox[0][1] + bbox[2][1]) / 2
+        
+        #print(f" x_centre : {x_center}, y_centre: {y_center}, texte : {text}")
+        
+        text_clean = text.strip()
+        #print(f'text cleaned : {text_clean} avec confidence {confidence} x_centre : {x_center}, y_centre: {y_center}')
+        
+        # Ignorer texte trop court ou trop peu confiant
+        if len(text_clean) < 2 or confidence < 0.3:
+            print(f'text court : {text_clean}, len: {len(text_clean)}, and confidence : {confidence}')
+            continue
+        
+        if text_clean =="This week":
+            print(text_clean)
+        
+        # === DÉTECTER LA ZONE ===
+        
+        # Métadonnées (très bas dans l'image, y > 800)
+        if y_center <= 200:
+            zones['meta'].append({
+                'text': text_clean,
+                'x': x_center,
+                'y': y_center,
+                'confidence': confidence
+            })
+        # Messages (haut-gauche)
+        elif y_center < 500 and  y_center > 300 and x_center < 480:
+            zones['messages'].append({
+                'text': text_clean,
+                'x': x_center,
+                'y': y_center,
+                'confidence': confidence
+            })
+        # Gifts (haut-droite)
+        elif y_center < 500 and y_center > 300 and x_center >= 480:
+            zones['gifts'].append({
+                'text': text_clean,
+                'x': x_center,
+                'y': y_center,
+                'confidence': confidence
+            })
+        # Photos (bas-gauche)
+        elif y_center >= 600 and y_center < 800 and x_center < 480:
+            zones['photos'].append({
+                'text': text_clean,
+                'x': x_center,
+                'y': y_center,
+                'confidence': confidence
+            })
+        # Response Speed (bas-droite)
+        elif y_center >= 600 and y_center < 800 and x_center >= 480:
+            zones['speeds'].append({
+                'text': text_clean,
+                'x': x_center,
+                'y': y_center,
+                'confidence': confidence
+            })
+    
+    print("********* message")
+    for message in zones['messages']:
+        print(f'les zones : {message["text"]}')
+        
+    print("********* gift")
+    for gift in zones['gifts']:
+        print(f'texte : {gift['text']}')
+        
+    print("********* photo")
+    for photo in zones['photos']:
+        print(f'texte : {photo['text']}')
+        
+    print("********* speed")
+    for speed in zones['speeds']:
+        print(f'texte : {speed['text']}')
+        
+    print("********* metadata")
+    for meta in zones['meta']:
+        print(f'texte : {meta['text']}')
+    
+    # Parser chaque zone
+    kpi_data = {}
+    
+    # Messages
+    msg_data = extract_sent_and_rr(zones['messages'])
+    if msg_data:
+        kpi_data['msg_sent'] = msg_data.get('sent')
+        kpi_data['msg_rr'] = msg_data.get('rr')
+    
+    # Gifts
+    gift_data = extract_sent_and_rr_for_gift_and_photos(zones['gifts'])
+    if gift_data:
+        kpi_data['gift_sent'] = gift_data.get('sent')
+        kpi_data['gift_rr'] = gift_data.get('rr')
+    
+    # Photos
+    photo_data = extract_sent_and_rr_for_gift_and_photos(zones['photos'])
+    if photo_data:
+        kpi_data['photo_sent'] = photo_data.get('sent')
+        kpi_data['photo_rr'] = photo_data.get('rr')
+    
+    # Response Speed
+    """ speed = extract_speed(zones['speeds'])
+    if speed:
+        kpi_data['speed_rr'] = speed """
+    
+    # Meta
+    meta = extract_meta(zones['meta'])
+    kpi_data.update(meta)
+    
+    #print(f'Zones détectées: {zones}')
+    return kpi_data
+
+
+def extract_sent_and_rr(zone_items):
+    """
+    Extrait "X Sent" et "Y% RR" d'une zone
+    Cherche les patterns peu importe l'ordre
+    """
+    result = {}
+    
+    # Combiner tous les textes de la zone
+    all_text = ' '.join([item['text'] for item in zone_items])
+    print(f'all text joined : {all_text}')
+    
+    # === CHERCHER "SENT" ===
+    # Patterns de référence :
+    # - "2520 Sent"
+    # - "2250 Sent"
+    # - "0 Sent"
+    matches = re.findall(r'(\d+)\s*Sent', all_text, re.IGNORECASE)
+    if matches:
+        # Prendre le PREMIER nombre trouvé avec "Sent"
+        # (les badges sont généralement les premiers)
+        for match in matches:
+            if match != '2520' and match !="2250" and match !="0":
+                print(f' matches : {match}')
+                result['sent'] = int(match)
+            else:
+                result['sent'] = 0
+    
+    # === CHERCHER "RR" (Response Rate) ===
+    # Patterns possibles :
+    # - "90% RR"
+    # - "78%RR" (sans espace)
+    # - "0% RR"
+    matches = re.findall(r'([\d.]+)\s*RR', all_text, re.IGNORECASE)
+    print(matches)
+    rr_cleaned = []
+    if matches:
+        # Prendre le PREMIER pourcentage avec RR
+        for match in matches:
+            rr_cleaned.append(match[:-2])
+        
+        for rr in rr_cleaned:
+            if rr != '90' and rr !="78" and rr !="0":
+                print(f'rr matches : {rr}')
+                result['rr'] = float(rr)
+            else:
+                print("RR pris par defaut 90, développement de l'algo en cours")
+                result['rr'] = 90
+    
+    return result
+
+
+def extract_sent_and_rr_for_gift_and_photos(zone_items):
+    """
+    Extrait "X Sent" et "Y% RR" d'une zone
+    Cherche les patterns peu importe l'ordre
+    """
+    result = {}
+    
+    # Combiner tous les textes de la zone
+    all_text = ' '.join([item['text'] for item in zone_items])
+    print(f'all text joined : {all_text}')
+    
+    # === CHERCHER "SENT" ===
+    # Patterns de référence :
+    # - "540 Sent"
+    # - "125 Sent"
+    # - "0 Sent"
+    matches = re.findall(r'(\d+)\s*Sent', all_text, re.IGNORECASE)
+    if matches:
+        # Prendre le PREMIER nombre trouvé avec "Sent"
+        # (les badges sont généralement les premiers)
+        for match in matches:
+            if match != '540' and match !="125" and match !="0":
+                print(f' sent gift : {match}')
+                result['sent'] = int(match)
+            else:
+                result['sent'] = 0
+                print("valeur prise par defaut 0")
+    
+    # === CHERCHER "RR" (Response Rate) ===
+    # Patterns possibles :
+    # - "90% RR"
+    # - "78%RR" (sans espace)
+    # - "0% RR"
+    matches = re.findall(r'([\d.]+)\s*RR', all_text, re.IGNORECASE)
+    rr_cleaned = []
+    if matches:
+        for match in matches:
+            
+            rr_cleaned.append(match[:-2])
+            print(f'rr cleaned for gift and photos {len(match)}, {match}, {rr_cleaned}')
+        
+        for rr in rr_cleaned:
+            if rr != '90' and rr !="78" and rr !="0" and rr !="":
+                print(f'rr matches : {rr}')
+                result['rr'] = float(rr) #Provoque un erreur : could not convert string to float: ''
+            else:
+                print("valeur prise par defaut : 90")
+                result['rr'] = 90
+    return result
+
+def extract_speed(zone_items):
+    """
+    Extrait le pourcentage de Response Speed
+    Pattern : "XX.X% Messages answered within 1 minute"
+    """
+    all_text = ' '.join([item['text'] for item in zone_items])
+    
+    # Chercher pourcentage avant "Messages answered" ou "answered"
+    match = re.search(r'([\d.]+)\s*%.*?answered', all_text, re.IGNORECASE)
+    if match:
+        return float(match.group(1))
+    
+    # Fallback : chercher juste un pourcentage dans la zone Speed
+    match = re.search(r'([\d.]+)\s*%', all_text)
+    if match:
+        return float(match.group(1))
+    
+    return None
+
+
+def extract_meta(zone_items):
+    """
+    Extrait Total KPI et KPI Effect
+    """
+    meta = {}
+    all_text = ' '.join([item['text'] for item in zone_items])
+    
+    # Total KPI: -2.5
+    match = re.search(r'Total\s*KPI[:\s]*(-?[\d.]+)', all_text, re.IGNORECASE)
+    if match:
+        meta['total_kpi'] = float(match.group(1))
+    
+    # KPI Effect: -3%
+    match = re.search(r'KPI\s*Effect[:\s]*(-?[\d.]+)', all_text, re.IGNORECASE)
+    if match:
+        meta['kpi_effect'] = float(match.group(1))
+    
+    return meta

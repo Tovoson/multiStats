@@ -5,7 +5,7 @@ from django.urls import include, path
 router = DefaultRouter()
 
 urlpatterns = [
-    path('stats-multi/', include('stats.urls')),
+    path('api/', include('stats.urls')),
     path('admin/', admin.site.urls),
     path('', include('stats.urls')),
 ]

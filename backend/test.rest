@@ -1,0 +1,13 @@
+GET http://127.0.0.1:8000/api/kpi-daily
+Accept: application/json
+
+###
+POST http://127.0.0.1:8000/api/kpi-daily
+Content-Type: multipart/form-data; boundary=----WebKitFormBoundary7MA4YWxkTrZu0gW
+
+------WebKitFormBoundary7MA4YWxkTrZu0gW
+Content-Disposition: form-data; name="image_kpi"; filename="kpi.png"
+Content-Type: image/png
+
+< ./kpi.png
+------WebKitFormBoundary7MA4YWxkTrZu0gW--
