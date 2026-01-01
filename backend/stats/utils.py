@@ -76,13 +76,13 @@ def extract_kpi_with_easyocr(image_file):
         
         # Analyser par zones géographiques
         kpi_data = parse_by_geographic_zones(results)
-        print(f'donnée extraire: {kpi_data}')
+        #print(f'donnée extraire: {kpi_data}')
         
-        """ return {
+        return {
             'success': True,
             'data': kpi_data,
             'detections_count': len(results)
-        } """
+        }
         
     except Exception as e:
         print(f'erreur : {str(e)}')
@@ -213,13 +213,13 @@ def parse_by_geographic_zones(results):
         kpi_data['photo_rr'] = photo_data.get('rr')
     
     # Response Speed
-    """ speed = extract_speed(zones['speeds'])
+    speed = extract_speed(zones['speeds'])
     if speed:
-        kpi_data['speed_rr'] = speed """
+        kpi_data['speed_rr'] = speed
     
     # Meta
-    meta = extract_meta(zones['meta'])
-    kpi_data.update(meta)
+    #meta = extract_meta(zones['meta'])
+    #kpi_data.update(meta)
     
     #print(f'Zones détectées: {zones}')
     return kpi_data
@@ -321,9 +321,11 @@ def extract_sent_and_rr_for_gift_and_photos(zone_items):
             if rr != '90' and rr !="78" and rr !="0" and rr !="":
                 print(f'rr matches : {rr}')
                 result['rr'] = float(rr) #Provoque un erreur : could not convert string to float: ''
+            #Si on supprime else, RR de photo fonctionne, sinon il prend la valeur de else
             else:
-                print("valeur prise par defaut : 90")
+                print("les valeurs doivent être inclus dans le cas particulier 90, 78, 0")
                 result['rr'] = 90
+            
     return result
 
 def extract_speed(zone_items):
@@ -332,18 +334,31 @@ def extract_speed(zone_items):
     Pattern : "XX.X% Messages answered within 1 minute"
     """
     all_text = ' '.join([item['text'] for item in zone_items])
-    
+    print(f"all text for speed extrated: {all_text}")
     # Chercher pourcentage avant "Messages answered" ou "answered"
-    match = re.search(r'([\d.]+)\s*%.*?answered', all_text, re.IGNORECASE)
+    match = re.findall(r'([\d.]+)\s*Messages', all_text, re.IGNORECASE)
+    result = []
+    result_temp = []
+    final_result = ""
     if match:
-        return float(match.group(1))
-    
-    # Fallback : chercher juste un pourcentage dans la zone Speed
-    match = re.search(r'([\d.]+)\s*%', all_text)
-    if match:
-        return float(match.group(1))
-    
-    return None
+        for mtch in match:
+            if len(mtch) > 3:
+                print(f"all speed detected: {mtch}")
+                result.append(mtch)
+      
+        print(result)
+        result_temp = [nb[:-2] if nb.endswith("96") else nb for nb in result]
+        print(result_temp)
+        
+        for res in result_temp:
+            print(res)
+            if res !="65" and res != "50" and res != "0":
+                final_result = float(res)
+            else:
+                print("valeur prise par defaut")
+                final_result = "50"
+        print(f"final result for speed: {final_result}")
+    return final_result
 
 
 def extract_meta(zone_items):
@@ -353,14 +368,11 @@ def extract_meta(zone_items):
     meta = {}
     all_text = ' '.join([item['text'] for item in zone_items])
     
+    print(f"all text for meta : {all_text}")
     # Total KPI: -2.5
-    match = re.search(r'Total\s*KPI[:\s]*(-?[\d.]+)', all_text, re.IGNORECASE)
+    match = re.findall(r'([\d.]+)\s*KPI', all_text, re.IGNORECASE)
     if match:
         meta['total_kpi'] = float(match.group(1))
     
-    # KPI Effect: -3%
-    match = re.search(r'KPI\s*Effect[:\s]*(-?[\d.]+)', all_text, re.IGNORECASE)
-    if match:
-        meta['kpi_effect'] = float(match.group(1))
     
     return meta

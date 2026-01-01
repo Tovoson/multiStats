@@ -28,12 +28,14 @@ class KPIDailyView(APIView):
             }, status=status.HTTP_400_BAD_REQUEST)
         
         # 2. Extraire avec EasyOCR
+        """ 
+        Response = {success, data, detections_count}
+        """
         result = extract_kpi_with_easyocr(uploaded_image)
-        return Response({
-            result
-        })
+        print(result['data'])
+        #return Response({"data": result['data']})
         
-        """ if not result['success']:
+        if not result['success']:
             return Response({
                 'success': False,
                 'error': result['error']
@@ -42,8 +44,10 @@ class KPIDailyView(APIView):
         kpi_data = result['data']
         
         # 3. Ajouter date, moment, note
-        kpi_data['date'] = request.data.get('date', str(date.today()))
+        kpi_data['date'] = request.data.get('date', str(date.today())) # cherche "date" (reçu par l'api rest), si ça n'existe pas il utilise date.today ( par defaut )
         kpi_data['moment'] = request.data.get('moment', 'debut')
+        
+        print(f"{kpi_data['date']},{kpi_data['moment']}")
         
         note = request.data.get('note')
         if note:
@@ -54,7 +58,7 @@ class KPIDailyView(APIView):
                           'gift_sent', 'gift_rr', 'speed_rr']
         missing_fields = [f for f in required_fields if f not in kpi_data or kpi_data[f] is None]
         
-        if missing_fields:
+        if missing_fields:                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  
             return Response({
                 'success': False,
                 'error': 'Données incomplètes',
@@ -64,8 +68,11 @@ class KPIDailyView(APIView):
                 'suggestion': 'Vérifiez la qualité/résolution de l\'image'
             }, status=status.HTTP_400_BAD_REQUEST)
         
+        return Response({
+            "data": kpi_data
+        })
         # 5. Valider et sauvegarder
-        serializer = KpiDailySerializer(data=kpi_data)
+        """ serializer = KpiDailySerializer(data=kpi_data)
         
         if serializer.is_valid():
             kpi = serializer.save()
